@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: webhook_pipeline
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── DB Migrations (runs once, then exits) ───────────────────────────────
+  migrate:
+    build: .
+    command: node dist/db/migrate.js
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/webhook_pipeline
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  # ── API Server ──────────────────────────────────────────────────────────
+  api:
+    build: .
+    command: node dist/api/server.js
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/webhook_pipeline
+      JWT_SECRET: ${JWT_SECRET:-super-secret-change-in-prod}
+      WORKER_POLL_INTERVAL_MS: 2000
+      MAX_JOB_ATTEMPTS: 5
+      DELIVERY_TIMEOUT_MS: 10000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Background Worker ───────────────────────────────────────────────────
+  worker:
+    build: .
+    command: node dist/worker/index.js
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/webhook_pipeline
+      WORKER_POLL_INTERVAL_MS: 2000
+      WORKER_CONCURRENCY: 5
+      MAX_JOB_ATTEMPTS: 5
+      DELIVERY_TIMEOUT_MS: 10000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
