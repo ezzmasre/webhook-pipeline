@@ -25,7 +25,7 @@ export async function deliverToSubscribers(
     subscribers.map((sub) => deliverWithRetry(jobId, sub, result)),
   );
 }
-/////gitsadsad
+/////gitsadsadasdsad
 async function deliverWithRetry(
   jobId: string,
   subscriber: Subscriber,
